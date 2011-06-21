@@ -7,6 +7,7 @@ use DateTime;
 use Image::Magick;
 use List::Util qw(min max);
 use Storable qw(nstore retrieve);
+use URI;
 
 use Data::Dump;
 
@@ -58,24 +59,30 @@ my $end = DateTime->last_day_of_month(
 my $num_days = $end->delta_days($start)->in_units("days");
 
 # create image!
-my ($data_off_x, $data_off_y) = (50, 50);
+my $axis_size = 50;
 my $data_scale_xy = 3;
-my $sx = $data_off_x + $num_days * $data_scale_xy;
-my $sy = $data_off_y + 24 * 60 / $y_clamp * $data_scale_xy;
+my $sx = $num_days * $data_scale_xy;
+my $sy = 24 * 60 / $y_clamp * $data_scale_xy;
 
 my $im = magick(Image::Magick->new(size => "${sx}x${sy}"));
 magick($im->Read("xc:white"));
 
-for my $hour (0..23) {
-	my $dy = $data_off_y + (($hour - $hour_rot) % 24) * 60 / $y_clamp * $data_scale_xy;
+my $im_x = magick(Image::Magick->new(size => "${sx}x${axis_size}"));
+magick($im_x->Read("xc:white"));
 
-	magick($im->Draw(
+my $im_y = magick(Image::Magick->new(size => "${axis_size}x${sy}"));
+magick($im_y->Read("xc:white"));
+
+for my $hour (0..23) {
+	my $dy = (($hour - $hour_rot) % 24) * 60 / $y_clamp * $data_scale_xy;
+
+	magick($im_y->Draw(
 		primitive => "line",
-		points => "0,$dy $data_off_x,$dy",
+		points => "0,$dy $axis_size,$dy",
 		stroke => "black",
 	));
 
-	magick($im->Annotate(
+	magick($im_y->Annotate(
 		text => "$hour:00",
 		x => 4,
 		y => $dy + 12,
@@ -87,26 +94,26 @@ for my $hour (0..23) {
 my $off = 0;
 my $current = $start->clone();
 while ($current <= $end) {
-	my $dx = $data_off_x + $off * $data_scale_xy;
+	my $dx = $off * $data_scale_xy;
 	if ($current->day == 1) {
 		print STDERR sprintf("%04d-%02d...\n", $current->year, $current->month);
 
-		magick($im->Draw(
+		magick($im_x->Draw(
 			primitive => "line",
-			points => "$dx,0 $dx,$data_off_y",
+			points => "$dx,0 $dx,$axis_size",
 			stroke => "black",
 		));
 
-		magick($im->Annotate(
+		magick($im_x->Annotate(
 			text => $current->strftime("%Y-%m"),
 			x => $dx + 4,
-			y => $data_off_y / 2,
+			y => $axis_size / 2,
 		));
 	}
 
 	for my $hour (keys %{$data{$current->strftime("%Y%m%d")}}) {
 		my $nt = ($hour - $hour_rot * 60) % (24 * 60);
-		my $dy = $data_off_y + int($nt / $y_clamp) * $data_scale_xy;
+		my $dy = int($nt / $y_clamp) * $data_scale_xy;
 		magick($im->Draw(
 			primitive => "rectangle",
 			fill => "black",
@@ -123,4 +130,64 @@ while ($current <= $end) {
 	$off++;
 }
 
-magick($im->Write("png:-"));
+# write images
+my %uris;
+my $u = URI->new("data:");
+$u->media_type("image/png");
+
+$u->data($im->ImageToBlob(magick => "png"));
+$uris{data} = "$u";
+
+$u->data($im_x->ImageToBlob(magick => "png"));
+$uris{xaxis} = "$u";
+
+$u->data($im_y->ImageToBlob(magick => "png"));
+$uris{yaxis} = "$u";
+
+# write html
+
+my $html = <<'EOF';
+<!DOCTYPE html>
+<html>
+
+<head>
+<meta charset="UTF-8">
+<title>ircvis</title>
+
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.5.1/jquery.min.js"></script>
+<script type="text/javascript"><!--
+
+var i_x = "__X_AXIS__";
+var i_y = "__Y_AXIS__";
+var i_d = "__DATA__";
+
+$(window).scroll(function () {
+	$("#xaxis").css({ top  : $(this).scrollTop() });
+	$("#yaxis").css({ left : $(this).scrollLeft() });
+});
+
+$(function () {
+	$("body").append($("<div id=\"data\"  />").append($("<img>").attr("src", i_d)));
+	$("body").append($("<div id=\"xaxis\" />").append($("<img>").attr("src", i_x)));
+	$("body").append($("<div id=\"yaxis\" />").append($("<img>").attr("src", i_y)));
+
+	$("#xaxis, #yaxis, #data").css({ position : "absolute", top : "50px", left : "50px", });
+
+	$(window).scroll();
+});
+
+--></script>
+
+</head>
+
+<body>
+</body>
+
+</html>
+EOF
+
+$html =~ s/__X_AXIS__/$uris{xaxis}/;
+$html =~ s/__Y_AXIS__/$uris{yaxis}/;
+$html =~ s/__DATA__/$uris{data}/;
+
+print $html;
