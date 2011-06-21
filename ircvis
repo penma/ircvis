@@ -166,12 +166,20 @@ $(window).scroll(function () {
 	$("#yaxis").css({ left : $(this).scrollLeft() });
 });
 
+$(window).mousemove(function (e) {
+	$("#xmarker").css({ left : e.clientX });
+	$("#ymarker").css({ top  : e.clientY });
+});
+
 $(function () {
 	$("body").append($("<div id=\"data\"  />").append($("<img>").attr("src", i_d)));
 	$("body").append($("<div id=\"xaxis\" />").append($("<img>").attr("src", i_x)));
 	$("body").append($("<div id=\"yaxis\" />").append($("<img>").attr("src", i_y)));
 
 	$("#xaxis, #yaxis, #data").css({ position : "absolute", top : "50px", left : "50px", });
+
+	$("body").append($("<div id=\"xmarker\" />").css({ position : "fixed", top  : 0, width : 1, height : 50, backgroundColor : "black" }));
+	$("body").append($("<div id=\"ymarker\" />").css({ position : "fixed", left : 0, width : 50, height : 1, backgroundColor : "black" }));
 
 	$(window).scroll();
 });
