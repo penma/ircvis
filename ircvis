@@ -1,0 +1,126 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use DateTime;
+use Image::Magick;
+use List::Util qw(min max);
+use Storable qw(nstore retrieve);
+
+use Data::Dump;
+
+sub magick {
+	my $x = $_[0];
+
+	if ($x and !ref($x)) {
+		die("Magick error: $x");
+	}
+
+	return $x;
+}
+
+my $filter_line = qr/^(....)-(..)-(..) (..):(..):.. (?:<.| \* )${ARGV[0]}[> ]/;
+
+my $y_clamp = 5;
+my $hour_rot = 5;
+
+my %data;
+
+if (1) {
+	my ($year, $month, $day, $hour, $minute);
+	while (<STDIN>) {
+		$_ =~ $filter_line or next;
+		($year, $month, $day, $hour, $minute) = ($1, $2, $3, $4, $5);
+		$data{"$year$month$day"}->{int(($hour * 60 + $minute) / $y_clamp * $y_clamp)} = 1;
+	}
+	nstore \%data, "fnord.stor";
+} else {
+	%data = %{retrieve "fnord.stor"};
+}
+
+# define start/end times
+my ($start_y, $start_m) = (min keys %data) =~ /^(....)(..)/;
+my ($end_y,   $end_m  ) = (max keys %data) =~ /^(....)(..)/;
+
+my $start = DateTime->new(
+	year      => $start_y,
+	month     => $start_m,
+	day       => 1,
+	time_zone => "UTC",
+);
+my $end = DateTime->last_day_of_month(
+	year      => $end_y,
+	month     => $end_m,
+	time_zone => "UTC",
+);
+
+my $num_days = $end->delta_days($start)->in_units("days");
+
+# create image!
+my ($data_off_x, $data_off_y) = (50, 50);
+my $data_scale_xy = 3;
+my $sx = $data_off_x + $num_days * $data_scale_xy;
+my $sy = $data_off_y + 24 * 60 / $y_clamp * $data_scale_xy;
+
+my $im = magick(Image::Magick->new(size => "${sx}x${sy}"));
+magick($im->Read("xc:white"));
+
+for my $hour (0..23) {
+	my $dy = $data_off_y + (($hour - $hour_rot) % 24) * 60 / $y_clamp * $data_scale_xy;
+
+	magick($im->Draw(
+		primitive => "line",
+		points => "0,$dy $data_off_x,$dy",
+		stroke => "black",
+	));
+
+	magick($im->Annotate(
+		text => "$hour:00",
+		x => 4,
+		y => $dy + 12,
+	));
+}
+
+# walk!
+
+my $off = 0;
+my $current = $start->clone();
+while ($current <= $end) {
+	my $dx = $data_off_x + $off * $data_scale_xy;
+	if ($current->day == 1) {
+		print STDERR sprintf("%04d-%02d...\n", $current->year, $current->month);
+
+		magick($im->Draw(
+			primitive => "line",
+			points => "$dx,0 $dx,$data_off_y",
+			stroke => "black",
+		));
+
+		magick($im->Annotate(
+			text => $current->strftime("%Y-%m"),
+			x => $dx + 4,
+			y => $data_off_y / 2,
+		));
+	}
+
+	for my $hour (keys %{$data{$current->strftime("%Y%m%d")}}) {
+		my $nt = ($hour - $hour_rot * 60) % (24 * 60);
+		my $dy = $data_off_y + int($nt / $y_clamp) * $data_scale_xy;
+		magick($im->Draw(
+			primitive => "rectangle",
+			fill => "black",
+			points => sprintf("%d,%d %d,%d",
+				$dx,
+				$dy,
+				$dx + $data_scale_xy - 1,
+				$dy + $data_scale_xy - 1,
+			),
+		));
+	}
+
+	$current->add(days => 1);
+	$off++;
+}
+
+magick($im->Write("png:-"));
